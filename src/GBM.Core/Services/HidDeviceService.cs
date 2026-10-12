@@ -137,11 +137,59 @@ public class HidDeviceService : IHidDeviceService
         return results;
     }
 
+    // Short-lived cache of the full D3 read so the main battery path and the
+    // three-cell UI path share ONE device open per poll instead of opening the
+    // feature interface two or three times in quick succession (which hammers
+    // the dongle and can make reads — notably the dock — come back empty).
+    private readonly object _d3CacheLock = new();
+    private D3BatteryProtocol.Result _d3Cache;
+    private DateTime _d3CacheUtc = DateTime.MinValue;
+    private static readonly TimeSpan D3CacheWindow = TimeSpan.FromMilliseconds(1500);
+
+    private D3BatteryProtocol.Result ReadD3Cached()
+    {
+        lock (_d3CacheLock)
+        {
+            if (DateTime.UtcNow - _d3CacheUtc < D3CacheWindow)
+                return _d3Cache;
+
+            var path = D3BatteryProtocol.FindFeatureInterfacePath();
+            var r = path == null
+                ? default
+                : D3BatteryProtocol.Read(path, _logger);
+
+            _d3Cache = r;
+            _d3CacheUtc = DateTime.UtcNow;
+            return r;
+        }
+    }
+
     public (bool Success, int BatteryLevel, bool IsCharging) ReadBattery(DeviceProfile profile)
     {
+        // Model D3 / O3 Wireless (VID 0x3794): dedicated protocol module.
+        if (D3BatteryProtocol.Handles(profile.VendorId))
+        {
+            var d3 = ReadD3Cached();
+            return (d3.Success, d3.Level, d3.Charging);
+        }
+
         if (profile.Protocol == ChipProtocol.Pixart)
             return ReadBatteryPixart(profile);
         return ReadBatteryWithCommand(profile, BatteryCommand);
+    }
+
+    public GBM.Core.Models.D3BatterySet ReadD3Cells()
+    {
+        var r = ReadD3Cached();
+        if (r.Pack.Present || r.Guardian.Present || r.Dock.Present || r.Success || r.DockReadMissed)
+        {
+            return new GBM.Core.Models.D3BatterySet(
+                Pack:     new GBM.Core.Models.BatteryCell(r.Pack.Present, r.Pack.Level, r.Pack.VoltageMillivolts),
+                Guardian: new GBM.Core.Models.BatteryCell(r.Guardian.Present, r.Guardian.Level, r.Guardian.VoltageMillivolts),
+                Dock:     new GBM.Core.Models.BatteryCell(r.Dock.Present, r.Dock.Level, r.Dock.VoltageMillivolts))
+                { DockReadMissed = r.DockReadMissed };
+        }
+        return GBM.Core.Models.D3BatterySet.Empty;
     }
 
     private (bool Success, int BatteryLevel, bool IsCharging) ReadBatteryWithCommand(
@@ -1072,6 +1120,47 @@ public class HidDeviceService : IHidDeviceService
         return TryPixartCandidateG(triggerDevice, inputDevice, logger, strategyKey);
     }
 
+    private DeviceProfile? ProbeDeviceD3(DeviceInfo device)
+    {
+        string path = device.DevicePath;
+        if (!path.Contains("mi_00&col01", StringComparison.OrdinalIgnoreCase))
+        {
+            var found = D3BatteryProtocol.FindFeatureInterfacePath();
+            if (found == null)
+            {
+                _logger.LogDebug("[D3] No 64-byte feature interface for {Model}", device.ModelName);
+                return null;
+            }
+            path = found;
+        }
+
+        var identity = D3BatteryProtocol.ReadIdentity(path, _logger);
+        var battery = D3BatteryProtocol.Read(path, _logger);
+
+        if (identity == null && !battery.Success)
+        {
+            _logger.LogDebug("[D3] Interface did not respond to identity or battery query");
+            return null;
+        }
+
+        _logger.LogInformation(
+            "[D3] Probe SUCCESS: {Model} id={Id} Level={Level}% charging={Charging} {Mv}mV",
+            device.ModelName, identity ?? "?", battery.Level, battery.Charging, battery.VoltageMillivolts);
+
+        return new DeviceProfile
+        {
+            CompositeKey = device.CompositeKey,
+            DevicePath = path,
+            ReportId = 0x03,
+            ReportLength = 64,
+            UseFeatureReports = true,
+            VendorId = device.VendorId,
+            ProductId = device.ProductId,
+            ModelName = device.ModelName,
+            LastSeen = DateTime.UtcNow
+        };
+    }
+
     private DeviceProfile? ProbeDevicePixart(HidDevice hidDevice, DeviceInfo device)
     {
         int maxFeatureLen = 0;
@@ -1316,6 +1405,10 @@ public class HidDeviceService : IHidDeviceService
             // Pixart devices (0x093A) use a different protocol entirely
             if (DeviceDatabase.IsPixartDevice(device.VendorId))
                 return ProbeDevicePixart(hidDevice, device);
+
+            // Model D3 / O3 Wireless (0x3794): dedicated capture-confirmed protocol.
+            if (D3BatteryProtocol.Handles(device.VendorId))
+                return ProbeDeviceD3(device);
 
             int maxFeatureLen = 0;
             int maxOutputLen = 0;

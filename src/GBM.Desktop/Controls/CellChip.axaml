@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="GBM.Desktop.Controls.CellChip">
+
+    <!-- Compact secondary-battery readout (Guardian / Dock): label, percentage,
+         and a slim fill bar. Styled to match the app's stat-card language.
+         The fill bar uses a two-column Grid whose star widths encode the
+         percentage, so Avalonia lays it out proportionally with no manual math. -->
+    <Border Classes="stat-card" Padding="14,12" MinWidth="118">
+        <StackPanel Spacing="8">
+
+            <!-- Label row: a small dot + the label -->
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <Ellipse Name="AccentDot" Width="7" Height="7"
+                         VerticalAlignment="Center"
+                         Fill="{DynamicResource TextMutedBrush}" />
+                <TextBlock Name="LabelText"
+                           Text="BATTERY"
+                           FontSize="11"
+                           FontWeight="Medium"
+                           LetterSpacing="0.4"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Percentage (number + % suffix) -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
+                <TextBlock Name="PercentText"
+                           Text="—"
+                           FontSize="24"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextPrimaryBrush}"
+                           VerticalAlignment="Bottom" />
+                <TextBlock Name="PercentSuffix"
+                           Text="%"
+                           FontSize="13"
+                           FontWeight="Light"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Bottom"
+                           Margin="1,0,0,3"
+                           IsVisible="False" />
+            </StackPanel>
+
+            <!-- Slim fill bar: Grid columns (fill*, rest*) encode the percentage -->
+            <Border Height="4" CornerRadius="2"
+                    Background="{DynamicResource SurfaceBorderBrush}"
+                    ClipToBounds="True">
+                <Grid Name="BarGrid" ColumnDefinitions="0*,100*">
+                    <Border Name="FillBar" Grid.Column="0"
+                            CornerRadius="2"
+                            Background="{DynamicResource TextMutedBrush}" />
+                </Grid>
+            </Border>
+
+        </StackPanel>
+    </Border>
+
+</UserControl>

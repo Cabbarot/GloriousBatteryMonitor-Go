@@ -395,6 +395,27 @@ public class BatteryMonitorService : IBatteryMonitorService, IDisposable
                 // Clear the settling flag once the window has elapsed
                 _cableDisconnectTime = null;
 
+                // Model D3 / O3: the headline battery is the hot-swap pack ONLY.
+                // If the pack has been removed, the mouse is running on its built-in
+                // Guardian cell — but the tray/main gauge must show "no battery"
+                // immediately, never the Guardian's charge. Detect this up front so
+                // it doesn't go through the generic failure path (which would hold
+                // the last known pack % for several cycles).
+                if (GBM.Core.Services.D3BatteryProtocol.Handles(_activeProfile.VendorId))
+                {
+                    var cells = _hidDeviceService.ReadD3Cells();
+                    if (cells.HasMouseData && !cells.Pack.Present)
+                    {
+                        _logger.LogInformation(
+                            "[D3] Hot-swap pack removed - showing no battery (running on Guardian {G}%).",
+                            cells.Guardian.Level);
+                        _consecutiveFailures = 0;      // not a comms failure
+                        _lastPositiveLevel = 0;
+                        TransitionToPackRemoved();
+                        return Task.CompletedTask;
+                    }
+                }
+
                 // Normal wireless mode - read from dongle.
                 var result = _hidDeviceService.ReadBattery(_activeProfile);
                 if (result.Success)
@@ -959,6 +980,27 @@ public class BatteryMonitorService : IBatteryMonitorService, IDisposable
         _lastAbsenceCheckUtc = DateTime.UtcNow;
         _lastAbsenceCheckResult = noMatchingDevice;
         return noMatchingDevice;
+    }
+
+    /// <summary>
+    /// The D3 hot-swap pack has been physically removed. Show a clear empty /
+    /// disconnected state for the headline battery (tray + gauge), distinct from
+    /// a comms failure. The Guardian/Dock side readouts keep updating separately.
+    /// </summary>
+    private void TransitionToPackRemoved()
+    {
+        var previousState = CurrentState;
+        UpdateState(new BatteryState
+        {
+            Level = 0,
+            IsCharging = false,
+            Connection = ConnectionState.NotConnected,
+            Health = BatteryHealth.Good,
+            DeviceName = previousState.DeviceName,
+            LastReadTime = DateTime.UtcNow,
+            LastChargeTime = previousState.LastChargeTime,
+            LastChargeLevel = previousState.LastChargeLevel
+        });
     }
 
     private void TransitionToDisconnected()

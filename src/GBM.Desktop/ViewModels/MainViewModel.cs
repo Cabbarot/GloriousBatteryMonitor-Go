@@ -31,6 +31,16 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private ConnectionState _connectionState = ConnectionState.NotConnected;
     [ObservableProperty] private string _statusText = "Not Connected";
 
+    // ── Three-cell battery (Glorious D3 / O3 InfinitePlay) ──
+    // Pack = mouse hot-swap battery (the headline / tray battery, same as BatteryLevel).
+    // Guardian = built-in backup cell. Dock = spare pack in the dock.
+    [ObservableProperty] private bool _hasMultiCell;
+    [ObservableProperty] private int _guardianLevel;
+    [ObservableProperty] private bool _guardianPresent;
+    [ObservableProperty] private int _dockLevel;
+    [ObservableProperty] private bool _dockPresent;
+    [ObservableProperty] private bool _onGuardianOnly;
+
     // Estimation
     [ObservableProperty] private bool _hasEstimate;
     [ObservableProperty] private TimeSpan _timeRemaining;
@@ -248,7 +258,41 @@ public partial class MainViewModel : ViewModelBase, IDisposable
                 ChargedToText = "—";
 
             UpdateLastSyncTextAndSchedule();
+
+            RefreshD3Cells();
         });
+    }
+
+    /// <summary>
+    /// Pulls the D3's auxiliary cells (Guardian backup + dock pack) alongside the
+    /// main battery. The mouse hot-swap pack stays the headline (BatteryLevel);
+    /// these feed the smaller side readouts. Safe no-op for non-D3 devices.
+    /// </summary>
+    private void RefreshD3Cells()
+    {
+        try
+        {
+            var cells = _hidService.ReadD3Cells();
+            HasMultiCell = cells.HasMouseData;
+            GuardianPresent = cells.Guardian.Present;
+            GuardianLevel = cells.Guardian.Level;
+
+            // The dock read occasionally misses a cycle (the firmware's shared
+            // response buffer hands back a sibling command's reply). A miss is NOT
+            // an empty dock, so hold the last known dock value instead of blanking
+            // the card — only update it when we actually got a dock answer.
+            if (!cells.DockReadMissed)
+            {
+                DockPresent = cells.Dock.Present;
+                DockLevel = cells.Dock.Level;
+            }
+
+            OnGuardianOnly = cells.HasMouseData && !cells.Pack.Present;
+        }
+        catch
+        {
+            HasMultiCell = false;
+        }
     }
 
     private void OnEstimateChanged(BatteryEstimate estimate)

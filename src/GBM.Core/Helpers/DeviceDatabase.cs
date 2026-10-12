@@ -4,6 +4,7 @@ public static class DeviceDatabase
 {
     public const int GloriousVendorId = 0x258A;
     public const int AlternateVendorId = 0x093A;
+    public const int D3VendorId = 0x3794; // Model O3 / D3 Wireless (nRF52840 receiver)
 
     private static readonly Dictionary<(int VendorId, int ProductId), (string ModelName, bool IsWireless)> Devices = new()
     {
@@ -44,10 +45,18 @@ public static class DeviceDatabase
         { (AlternateVendorId, 0x821D), ("Model I2", true) },
         // Alternate vendor - Model I2 Wired/Charging (PID changes when USB cable is plugged in)
         { (AlternateVendorId, 0x821A), ("Model I2", false) },
+
+        // V3 Wireless family (VID 0x3794) — shared receiver PID 0xA300.
+        // Both O3 and D3 enumerate under the same PID; the receiver does not
+        // distinguish the shape over USB, so we label it by the ergonomic D3
+        // (adjust if you own the O3). Battery protocol is identical.
+        { (D3VendorId, 0xA300), ("Model D3", true) },
     };
 
     public static bool IsKnownVendor(int vendorId) =>
-        vendorId == GloriousVendorId || vendorId == AlternateVendorId;
+        vendorId == GloriousVendorId ||
+        vendorId == AlternateVendorId ||
+        vendorId == D3VendorId;
 
     public static bool IsPixartDevice(int vendorId) => vendorId == AlternateVendorId;
 
